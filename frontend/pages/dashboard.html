@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Dashboard — MCPP</title>
+  <link rel="stylesheet" href="../assets/css/app.css">
+</head>
+<body>
+<div class="layout">
+  <div id="sidebar"></div>
+  <main class="main-content">
+
+    <div class="page-header page-header-row">
+      <div>
+        <h1 class="page-title">Security Dashboard</h1>
+        <p class="page-subtitle">// cloud posture overview</p>
+      </div>
+      <a href="new-scan.html" class="btn btn-primary">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        New Scan
+      </a>
+    </div>
+
+    <!-- Severity tiles -->
+    <div class="card-grid" id="summary-tiles">
+      <div class="stat-tile stat-critical">
+        <div class="stat-tile-header">
+          <div class="stat-icon">🔴</div>
+          <span style="font-size:10px;color:var(--text3);font-family:var(--font-mono);">CRIT</span>
+        </div>
+        <div class="stat-value" id="d-crit">—</div>
+        <div class="stat-label">Critical</div>
+        <div class="stat-bar"></div>
+      </div>
+      <div class="stat-tile stat-high">
+        <div class="stat-tile-header">
+          <div class="stat-icon">🟠</div>
+          <span style="font-size:10px;color:var(--text3);font-family:var(--font-mono);">HIGH</span>
+        </div>
+        <div class="stat-value" id="d-high">—</div>
+        <div class="stat-label">High</div>
+        <div class="stat-bar"></div>
+      </div>
+      <div class="stat-tile stat-medium">
+        <div class="stat-tile-header">
+          <div class="stat-icon">🟡</div>
+          <span style="font-size:10px;color:var(--text3);font-family:var(--font-mono);">MED</span>
+        </div>
+        <div class="stat-value" id="d-med">—</div>
+        <div class="stat-label">Medium</div>
+        <div class="stat-bar"></div>
+      </div>
+      <div class="stat-tile stat-low">
+        <div class="stat-tile-header">
+          <div class="stat-icon">🟢</div>
+          <span style="font-size:10px;color:var(--text3);font-family:var(--font-mono);">LOW</span>
+        </div>
+        <div class="stat-value" id="d-low">—</div>
+        <div class="stat-label">Low</div>
+        <div class="stat-bar"></div>
+      </div>
+    </div>
+
+    <!-- Active scan card -->
+    <div id="last-scan-card" class="card mb-20" style="display:none;">
+      <div class="card-title">Active Scan</div>
+      <div id="last-scan-body"></div>
+      <div style="margin-top:14px">
+        <a href="findings.html" class="btn btn-ghost btn-sm">View Findings →</a>
+      </div>
+    </div>
+
+    <!-- Recent scans -->
+    <div class="card mb-20">
+      <div class="flex-between mb-16">
+        <div class="card-title" style="margin-bottom:0">Recent Scans</div>
+        <a href="history.html" class="btn btn-ghost btn-sm">View all →</a>
+      </div>
+      <div id="recent-scans-body" style="color:var(--text2);font-family:var(--font-mono);font-size:13px">
+        <div style="display:flex;align-items:center;gap:8px;padding:20px 0;">
+          <div class="pulse-dot"></div> Loading scan history…
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick actions -->
+    <div class="card">
+      <div class="card-title">Quick Actions</div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <a href="new-scan.html"   class="btn btn-primary">⚡ Start New Scan</a>
+        <a href="findings.html"   class="btn btn-ghost">🛡 View Findings</a>
+        <a href="compliance.html" class="btn btn-ghost">✅ Compliance</a>
+        <a href="history.html"    class="btn btn-ghost">📜 Scan History</a>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script src="../assets/js/utils/auth.js"></script>
+<script src="../assets/js/utils/helpers.js"></script>
+<script src="../assets/js/api/client.js"></script>
+<script src="../assets/js/components/toast.js"></script>
+<script src="../assets/js/components/sidebar.js"></script>
+<script>
+Auth.guard();
+
+async function init() {
+  const results    = sessionStorage.getItem("scan_results");
+  const activeScan = sessionStorage.getItem("active_scan_id");
+
+  if (results) {
+    const data   = JSON.parse(results);
+    const counts = data.severity_counts || Helpers.countSeverity(data.findings || []);
+    document.getElementById("d-crit").textContent = counts.CRITICAL || 0;
+    document.getElementById("d-high").textContent = counts.HIGH     || 0;
+    document.getElementById("d-med").textContent  = counts.MEDIUM   || 0;
+    document.getElementById("d-low").textContent  = counts.LOW      || 0;
+
+    const card = document.getElementById("last-scan-card");
+    card.style.display = "block";
+    document.getElementById("last-scan-body").innerHTML = `
+      <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:12px;font-family:var(--font-mono)">
+        <span style="color:var(--text2)">Scan ID: <span style="color:var(--green)">${activeScan || "—"}</span></span>
+        <span style="color:var(--text2)">Findings: <span style="color:var(--text)">${(data.findings||[]).length}</span></span>
+        ${Helpers.statusBadge("completed")}
+      </div>`;
+  }
+
+  const el = document.getElementById("recent-scans-body");
+  try {
+    const data  = await API.listScans();
+    const scans = data.scans || [];
+
+    if (!scans.length) {
+      el.innerHTML = `<div class="empty-state">
+        <span class="empty-state-icon">🔍</span>
+        <div class="empty-state-title">No scans yet</div>
+        <div class="empty-state-text"><a href="new-scan.html">Launch your first assessment →</a></div>
+      </div>`;
+      return;
+    }
+
+    if (!results) {
+      const latest = scans.find(s => s.status === "completed");
+      if (latest) {
+        try {
+          const fd = await API.getFindings(latest.scan_id);
+          const c  = fd.severity_counts || {};
+          document.getElementById("d-crit").textContent = c.CRITICAL || 0;
+          document.getElementById("d-high").textContent = c.HIGH     || 0;
+          document.getElementById("d-med").textContent  = c.MEDIUM   || 0;
+          document.getElementById("d-low").textContent  = c.LOW      || 0;
+          sessionStorage.setItem("active_scan_id", latest.scan_id);
+          sessionStorage.setItem("scan_results", JSON.stringify(fd));
+        } catch(e) {}
+      }
+    }
+
+    el.innerHTML = `<div class="table-wrap"><table>
+      <thead><tr><th>Name</th><th>Provider</th><th>Status</th><th>Started</th><th></th></tr></thead>
+      <tbody>${scans.slice(0,10).map(s => `
+        <tr>
+          <td style="font-weight:600">${s.name || s.scan_id.slice(0,8)}</td>
+          <td><span class="mono">${(s.provider||"").toUpperCase()}</span></td>
+          <td>${Helpers.statusBadge(s.status)}</td>
+          <td class="mono" style="font-size:11px;color:var(--text3)">${s.created_at ? new Date(s.created_at).toLocaleString() : "—"}</td>
+          <td>${s.status === "completed"
+            ? `<button class="btn btn-ghost btn-sm" onclick="viewScan('${s.scan_id}')">View →</button>`
+            : `<button class="btn btn-ghost btn-sm" onclick="checkScan('${s.scan_id}')">Check →</button>`}
+          </td>
+        </tr>`).join("")}
+      </tbody></table></div>`;
+  } catch(e) {
+    el.innerHTML = `<p style="color:var(--text3);font-family:var(--font-mono);font-size:12px;">[ ERR ] Could not load scan history. Is the backend running?</p>`;
+  }
+}
+
+function viewScan(scanId) {
+  sessionStorage.setItem("active_scan_id", scanId);
+  window.location.href = "findings.html";
+}
+function checkScan(scanId) {
+  sessionStorage.setItem("active_scan_id", scanId);
+  window.location.href = "execution.html";
+}
+
+init();
+</script>
+</body>
+</html>

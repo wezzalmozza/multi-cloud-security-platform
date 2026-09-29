@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Scan History — MCPP</title>
+  <link rel="stylesheet" href="../assets/css/app.css">
+</head>
+<body>
+<div class="layout">
+  <div id="sidebar"></div>
+  <main class="main-content">
+    <div class="page-header">
+      <h1 class="page-title">Scan History</h1>
+      <p class="page-subtitle">// all past assessments</p>
+    </div>
+
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Provider</th><th>Status</th><th>Progress</th><th>Started</th><th>Completed</th><th></th></tr></thead>
+          <tbody id="history-body">
+            <tr><td colspan="7" style="text-align:center;padding:32px;color:var(--text3);font-family:var(--font-mono);">
+              <div style="display:flex;align-items:center;justify-content:center;gap:8px;"><div class="pulse-dot"></div> Loading history…</div>
+            </td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="../assets/js/utils/auth.js"></script>
+<script src="../assets/js/utils/helpers.js"></script>
+<script src="../assets/js/api/client.js"></script>
+<script src="../assets/js/components/toast.js"></script>
+<script src="../assets/js/components/sidebar.js"></script>
+<script>
+Auth.guard();
+async function init() {
+  const tbody = document.getElementById("history-body");
+  try {
+    const data  = await API.listScans();
+    const scans = data.scans || [];
+    if (!scans.length) {
+      tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:48px;"><div class="empty-state">
+        <span class="empty-state-icon">📜</span>
+        <div class="empty-state-title">No scan history</div>
+        <div class="empty-state-text"><a href="new-scan.html">Start your first assessment →</a></div>
+      </div></td></tr>`;
+      return;
+    }
+    tbody.innerHTML = scans.map(s => `
+      <tr>
+        <td style="font-weight:600">${s.name || s.scan_id.slice(0,8)}</td>
+        <td><span class="mono">${(s.provider||"").toUpperCase()}</span></td>
+        <td>${Helpers.statusBadge(s.status)}</td>
+        <td style="min-width:120px">
+          <div class="progress-wrap"><div class="progress-bar" style="width:${s.progress||0}%"></div></div>
+          <div style="font-size:10px;color:var(--text3);font-family:var(--font-mono);margin-top:3px">${(s.progress||0).toFixed(0)}%</div>
+        </td>
+        <td class="mono" style="font-size:11px;color:var(--text3)">${s.created_at ? new Date(s.created_at).toLocaleString() : "—"}</td>
+        <td class="mono" style="font-size:11px;color:var(--text3)">${s.completed_at ? new Date(s.completed_at).toLocaleString() : "—"}</td>
+        <td>
+          ${s.status === "completed"
+            ? `<button class="btn btn-ghost btn-sm" onclick="viewScan('${s.scan_id}')">Findings →</button>`
+            : s.status === "running"
+              ? `<button class="btn btn-ghost btn-sm" onclick="checkScan('${s.scan_id}')">Monitor →</button>`
+              : "—"}
+        </td>
+      </tr>`).join("");
+  } catch(e) {
+    Toast.error(e.message);
+    tbody.innerHTML = `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--danger);font-family:var(--font-mono);">[ ERR ] ${e.message}</td></tr>`;
+  }
+}
+function viewScan(id) { sessionStorage.setItem("active_scan_id", id); window.location.href = "findings.html"; }
+function checkScan(id) { sessionStorage.setItem("active_scan_id", id); window.location.href = "execution.html"; }
+init();
+</script>
+</body>
+</html>

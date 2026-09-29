@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Compliance — MCPP</title>
+  <link rel="stylesheet" href="../assets/css/app.css">
+</head>
+<body>
+<div class="layout">
+  <div id="sidebar"></div>
+  <main class="main-content">
+    <div class="page-header">
+      <h1 class="page-title">Compliance</h1>
+      <p class="page-subtitle">Control mapping from the most recent findings</p>
+    </div>
+
+    <div class="card" style="margin-bottom:20px">
+      <h2 class="card-title">Control Coverage</h2>
+      <div id="compliance-empty" style="color:var(--text2)">No finding data yet. Run a scan and open Findings first.</div>
+      <div class="table-wrap" id="compliance-table-wrap" style="display:none">
+        <table>
+          <thead>
+            <tr>
+              <th>Control</th>
+              <th>Findings</th>
+              <th>Highest Severity</th>
+            </tr>
+          </thead>
+          <tbody id="compliance-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Quick Actions</h2>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <a href="new-scan.html" class="btn btn-primary">Run New Scan</a>
+        <a href="findings.html" class="btn btn-ghost">Review Findings</a>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="../assets/js/utils/auth.js"></script>
+<script src="../assets/js/utils/helpers.js"></script>
+<script src="../assets/js/components/toast.js"></script>
+<script src="../assets/js/components/sidebar.js"></script>
+<script>
+Auth.guard();
+
+(function initCompliance() {
+  const raw = sessionStorage.getItem("scan_results");
+  if (!raw) return;
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return;
+  }
+
+  const findings = parsed.findings || [];
+  const map = {};
+  const severityRank = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1, INFO: 0 };
+
+  findings.forEach(f => {
+    const controls = Array.isArray(f.cis_controls) && f.cis_controls.length ? f.cis_controls : ["Unmapped"];
+    controls.forEach(control => {
+      if (!map[control]) {
+        map[control] = { count: 0, highest: "INFO" };
+      }
+      map[control].count += 1;
+      if (severityRank[f.severity] > severityRank[map[control].highest]) {
+        map[control].highest = f.severity;
+      }
+    });
+  });
+
+  const rows = Object.entries(map).sort((a, b) => b[1].count - a[1].count);
+  if (!rows.length) return;
+
+  document.getElementById("compliance-empty").style.display = "none";
+  document.getElementById("compliance-table-wrap").style.display = "block";
+  document.getElementById("compliance-body").innerHTML = rows.map(([control, meta]) => `
+    <tr>
+      <td><strong>${control}</strong></td>
+      <td>${meta.count}</td>
+      <td>${Helpers.severityBadge(meta.highest)}</td>
+    </tr>`).join("");
+})();
+</script>
+</body>
+</html>

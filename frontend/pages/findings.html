@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Findings — MCPP</title>
+  <link rel="stylesheet" href="../assets/css/app.css">
+</head>
+<body>
+<div class="layout">
+  <div id="sidebar"></div>
+  <main class="main-content">
+
+    <div class="page-header page-header-row">
+      <div>
+        <h1 class="page-title">Security Findings</h1>
+        <p class="page-subtitle" id="scan-label">// loading assessment data…</p>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <button class="btn btn-primary" onclick="generateAiReport()" id="ai-btn">
+          ⚡ Generate AI Report
+        </button>
+        <button class="btn btn-outline" onclick="exportPdfReport()" id="pdf-btn">
+          📄 Export PDF Report
+        </button>
+      </div>
+    </div>
+
+    <!-- Severity tiles -->
+    <div class="card-grid mb-24" id="sev-tiles"></div>
+
+    <!-- AI Report -->
+    <div class="card mb-20" id="ai-report-card" style="display:none">
+      <div class="card-title">AI Security Analysis</div>
+      <div id="ai-report"></div>
+      <!-- Remediation plans by severity -->
+      <div id="ai-remediation-plans" style="display:none;margin-top:24px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2);margin-bottom:12px;font-family:var(--font-mono)">Remediation Plans by Criticality</div>
+        <div id="ai-plans-body"></div>
+      </div>
+      <!-- CIS control mapping -->
+      <div id="ai-cis-section" style="display:none;margin-top:24px">
+        <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2);margin-bottom:12px;font-family:var(--font-mono)">CIS Control Mapping</div>
+        <div id="ai-cis-body"></div>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="card mb-20">
+      <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+        <select id="f-severity" class="form-select" style="width:150px" onchange="applyFilters()">
+          <option value="">All severities</option>
+          <option>CRITICAL</option><option>HIGH</option>
+          <option>MEDIUM</option><option>LOW</option><option>INFO</option>
+        </select>
+        <select id="f-module" class="form-select" style="width:200px" onchange="applyFilters()">
+          <option value="">All modules</option>
+        </select>
+        <input id="f-search" class="form-input" style="flex:1;min-width:160px"
+               placeholder="Search findings…" oninput="applyFilters()">
+        <span id="f-count" style="color:var(--text3);font-size:11px;font-family:var(--font-mono);white-space:nowrap;"></span>
+      </div>
+    </div>
+
+    <!-- Findings table -->
+    <div class="card">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Severity</th><th>Title</th><th>Resource</th>
+              <th>Module</th><th>Region</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="findings-body">
+            <tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text3);font-family:var(--font-mono);">Loading findings…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<!-- Finding detail modal -->
+<div class="modal-overlay" id="modal-overlay">
+  <div class="modal-box">
+    <div class="modal-header">
+      <span class="modal-title" id="modal-title">Finding Detail</span>
+      <button class="modal-close" onclick="Modal.close()">✕</button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+  </div>
+</div>
+
+<script src="../assets/js/utils/auth.js"></script>
+<script src="../assets/js/utils/helpers.js"></script>
+<script src="../assets/js/api/client.js"></script>
+<script src="../assets/js/components/toast.js"></script>
+<script src="../assets/js/components/modal.js"></script>
+<script src="../assets/js/components/sidebar.js"></script>
+<script>
+Auth.guard();
+
+let _allFindings   = [];
+let _shownFindings = [];
+let _activeScanId  = null;
+
+async function init() {
+  let scanId = sessionStorage.getItem("active_scan_id");
+
+  if (!scanId) {
+    try {
+      const list   = await API.listScans();
+      const latest = (list.scans || []).find(s => s.status === "completed");
+      if (latest) { scanId = latest.scan_id; sessionStorage.setItem("active_scan_id", scanId); }
+    } catch(e) {}
+  }
+
+  if (!scanId) {
+    document.getElementById("scan-label").textContent = "// no completed scan found";
+    document.getElementById("findings-body").innerHTML =
+      `<tr><td colspan="6" style="text-align:center;padding:48px"><div class="empty-state">
+        <span class="empty-state-icon">🔍</span>
+        <div class="empty-state-title">No scan selected</div>
+        <div class="empty-state-text"><a href="new-scan.html">Start a scan</a> or <a href="history.html">pick from history</a></div>
+      </div></td></tr>`;
+    return;
+  }
+
+  _activeScanId = scanId;
+  document.getElementById("scan-label").textContent = `// scan_id: ${scanId}`;
+
+  try {
+    const data   = await API.getFindings(scanId);
+    _allFindings = data.findings || [];
+    renderTiles(data.severity_counts || Helpers.countSeverity(_allFindings));
+    populateModuleFilter(_allFindings);
+    applyFilters();
+  } catch(e) {
+    Toast.error(e.message);
+    document.getElementById("findings-body").innerHTML =
+      `<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--danger);font-family:var(--font-mono);">[ ERR ] ${e.message}</td></tr>`;
+  }
+}
+
+function renderTiles(counts) {
+  document.getElementById("sev-tiles").innerHTML =
+    [["CRITICAL","🔴","stat-critical"],["HIGH","🟠","stat-high"],["MEDIUM","🟡","stat-medium"],["LOW","🟢","stat-low"]].map(([s,icon,cls]) => `
+      <div class="stat-tile ${cls}">
+        <div class="stat-tile-header"><div class="stat-icon">${icon}</div></div>
+        <div class="stat-value">${counts[s] || 0}</div>
+        <div class="stat-label">${s}</div>
+        <div class="stat-bar"></div>
+      </div>`).join("");
+}
+
+function populateModuleFilter(findings) {
+  const mods = [...new Set(findings.map(f => f.module_id))];
+  const sel  = document.getElementById("f-module");
+  mods.forEach(m => { const o = document.createElement("option"); o.value = m; o.textContent = m; sel.appendChild(o); });
+}
+
+function applyFilters() {
+  const sev    = document.getElementById("f-severity").value;
+  const mod    = document.getElementById("f-module").value;
+  const search = document.getElementById("f-search").value.toLowerCase();
+
+  _shownFindings = _allFindings.filter(f =>
+    (!sev    || f.severity  === sev) &&
+    (!mod    || f.module_id === mod) &&
+    (!search || (f.title||"").toLowerCase().includes(search) || (f.affected_resource||"").toLowerCase().includes(search))
+  );
+  document.getElementById("f-count").textContent = `${_shownFindings.length} / ${_allFindings.length} findings`;
+  renderTable(_shownFindings);
+}
+
+function renderTable(findings) {
+  const tbody = document.getElementById("findings-body");
+  if (!findings.length) {
+    tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:32px;color:var(--text3);font-family:var(--font-mono);">No findings match your filters.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = findings.map((f, i) => `
+    <tr>
+      <td>${Helpers.severityBadge(f.severity)}</td>
+      <td style="font-weight:600;max-width:260px">${f.title}</td>
+      <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:11px;color:var(--text2)"
+          title="${f.affected_resource||""}">${f.affected_resource||"—"}</td>
+      <td class="mono">${f.module_id}</td>
+      <td class="mono">${f.region||"—"}</td>
+      <td><button class="btn btn-ghost btn-sm" onclick="showFinding(${i})">Detail →</button></td>
+    </tr>`).join("");
+}
+
+function showFinding(i) {
+  const f = _shownFindings[i];
+  document.getElementById("modal-title").textContent = f.title;
+  document.getElementById("modal-body").innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;">
+      ${Helpers.severityBadge(f.severity)}
+      <span class="mono" style="font-size:11px;color:var(--text3)">${f.module_id}</span>
+      ${f.region ? `<span class="mono" style="font-size:11px;color:var(--text3)">${f.region}</span>` : ""}
+    </div>
+    ${f.affected_resource ? `<div style="padding:10px 12px;background:var(--bg4);border-radius:var(--radius);font-family:var(--font-mono);font-size:12px;color:var(--text2);margin-bottom:14px;">${f.affected_resource}</div>` : ""}
+    <hr>
+    <p style="line-height:1.7">${f.description}</p>
+    <hr>
+    <p><strong>Remediation</strong></p>
+    <p style="color:var(--text2)">${f.remediation}</p>
+    ${f.cis_controls && f.cis_controls.length ? `<hr><p><strong>CIS Controls:</strong> <span style="font-family:var(--font-mono);color:var(--green)">${f.cis_controls.join(", ")}</span></p>` : ""}
+  `;
+  document.getElementById("modal-overlay").classList.add("modal-open");
+}
+
+document.getElementById("modal-overlay").addEventListener("click", function(e) {
+  if (e.target === this) Modal.close();
+});
+
+const SEV_COLORS = { CRITICAL: "#ef4444", HIGH: "#f97316", MEDIUM: "#eab308", LOW: "#22c55e" };
+const SEV_ORDER  = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
+
+async function generateAiReport() {
+  if (!_activeScanId) return;
+  const btn = document.getElementById("ai-btn");
+  btn.disabled = true; btn.textContent = "⚡ Analyzing…";
+
+  try {
+    const data = await API.fetchAiReport(_activeScanId);
+    const r    = data.ai_report;
+    const score = r.risk_score || 0;
+    const riskClass = score >= 70 ? "risk-high" : score >= 40 ? "risk-medium" : "risk-low";
+
+    const findingsHtml = (r.findings || []).map(f => {
+      const sev = (f.severity || "low").toUpperCase();
+      const controls = (f.cis_controls || []);
+      const cisTagsHtml = controls.length
+        ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:4px">${controls.map(c =>
+            `<span style="font-family:var(--font-mono);font-size:10px;background:var(--bg4);color:var(--green);border:1px solid var(--green-border);border-radius:3px;padding:2px 6px">${c}</span>`
+          ).join("")}</div>`
+        : "";
+      return `
+      <div class="ai-finding-item ${f.severity.toLowerCase()}">
+        <div class="ai-finding-title">
+          ${Helpers.severityBadge(sev)}
+          <span>${f.title}</span>
+        </div>
+        <div class="ai-finding-body">${f.explanation}</div>
+        ${f.remediation_guidance ? `
+        <div style="margin-top:10px;padding:10px 12px;background:var(--bg4);border-radius:var(--radius);border-left:3px solid var(--green)">
+          <div style="font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:var(--green);font-family:var(--font-mono);margin-bottom:5px">Remediation Guidance</div>
+          <div style="font-size:12px;color:var(--text2);line-height:1.6">${f.remediation_guidance}</div>
+        </div>` : ""}
+        ${f.fix_cli ? `<div class="ai-fix-cli">$ ${f.fix_cli}</div>` : ""}
+        ${cisTagsHtml}
+      </div>`;
+    }).join("");
+
+    document.getElementById("ai-report").innerHTML = `
+      <div class="risk-score-wrap">
+        <div class="risk-score-circle ${riskClass}">${score}</div>
+        <div>
+          <div style="font-size:11px;color:var(--text3);font-family:var(--font-mono);margin-bottom:6px;">RISK SCORE / 100</div>
+          <div class="risk-summary">${r.executive_summary}</div>
+        </div>
+      </div>
+      <div style="font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--text2);margin-bottom:12px;font-family:var(--font-mono);">Top Findings</div>
+      ${findingsHtml || '<p style="color:var(--text3)">No critical findings identified.</p>'}`;
+
+    // ── Remediation plans by criticality ───────────────────────────────────
+    const plans = r.remediation_plans || {};
+    const planKeys = SEV_ORDER.filter(s => plans[s]);
+    if (planKeys.length) {
+      document.getElementById("ai-plans-body").innerHTML = planKeys.map(sev => {
+        const p = plans[sev];
+        const color = SEV_COLORS[sev] || "var(--text)";
+        const stepsHtml = (p.steps || []).map((s, i) =>
+          `<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">
+             <span style="font-family:var(--font-mono);font-size:11px;color:${color};flex-shrink:0;margin-top:2px">${String(i+1).padStart(2,"0")}.</span>
+             <span style="color:var(--text2);font-size:13px">${s}</span>
+           </div>`).join("");
+        return `
+          <div style="border:1px solid ${color}33;border-left:3px solid ${color};border-radius:var(--radius);padding:16px 18px;margin-bottom:14px;background:${color}08">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+              <div style="display:flex;align-items:center;gap:8px">
+                ${Helpers.severityBadge(sev)}
+                <span style="font-weight:700;font-size:14px">${sev} Remediation Plan</span>
+              </div>
+              <span style="font-family:var(--font-mono);font-size:11px;color:var(--text3);background:var(--bg4);padding:3px 8px;border-radius:4px">Est. ${p.estimated_effort || "—"}</span>
+            </div>
+            <p style="color:var(--text2);font-size:13px;margin-bottom:12px">${p.summary || ""}</p>
+            ${stepsHtml}
+          </div>`;
+      }).join("");
+      document.getElementById("ai-remediation-plans").style.display = "block";
+    }
+
+    // ── CIS control mapping ────────────────────────────────────────────────
+    const cisMap = r.cis_mapping || {};
+    const cisKeys = Object.keys(cisMap).sort();
+    if (cisKeys.length) {
+      const sevOrder = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4 };
+      const sortedCis = cisKeys.sort((a, b) => {
+        const sa = sevOrder[cisMap[a].highest_severity] ?? 5;
+        const sb = sevOrder[cisMap[b].highest_severity] ?? 5;
+        return sa !== sb ? sa - sb : a.localeCompare(b);
+      });
+      document.getElementById("ai-cis-body").innerHTML = `
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th style="font-family:var(--font-mono)">Control</th>
+              <th>Title</th>
+              <th>Status</th>
+              <th>Findings</th>
+              <th>Highest Severity</th>
+              <th>Remediation Note</th>
+            </tr></thead>
+            <tbody>${sortedCis.map(ctrl => {
+              const c = cisMap[ctrl];
+              return `<tr>
+                <td><span style="font-family:var(--font-mono);font-size:12px;color:var(--green)">${ctrl}</span></td>
+                <td style="font-size:12px;font-weight:600">${c.title || ctrl}</td>
+                <td><span style="font-family:var(--font-mono);font-size:11px;color:var(--danger);background:var(--danger-glow,#ef444415);padding:2px 7px;border-radius:3px;border:1px solid #ef444440">${c.status || "FAIL"}</span></td>
+                <td style="font-family:var(--font-mono);text-align:center">${c.findings_count || 0}</td>
+                <td>${Helpers.severityBadge(c.highest_severity || "INFO")}</td>
+                <td style="font-size:12px;color:var(--text2);max-width:260px">${c.remediation_note || "—"}</td>
+              </tr>`;
+            }).join("")}</tbody>
+          </table>
+        </div>`;
+      document.getElementById("ai-cis-section").style.display = "block";
+    }
+
+    document.getElementById("ai-report-card").style.display = "block";
+    document.getElementById("ai-report-card").scrollIntoView({ behavior: "smooth", block: "start" });
+    Toast.success("AI report generated");
+  } catch(e) {
+    Toast.error("AI report failed: " + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = "⚡ Generate AI Report";
+  }
+}
+
+async function exportPdfReport() {
+  if (!_activeScanId) { Toast.error("No scan selected"); return; }
+  const btn = document.getElementById("pdf-btn");
+  btn.disabled = true; btn.textContent = "📄 Building report…";
+  try {
+    let aiReport = null;
+    try {
+      const d = await Promise.race([
+        API.fetchAiReport(_activeScanId),
+        new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), 50000))
+      ]);
+      aiReport = d.ai_report;
+    } catch(e) { /* use fallback */ }
+
+    const win = window.open("", "_blank");
+    if (!win) { Toast.error("Pop-up blocked — allow pop-ups for this site"); return; }
+    win.document.write(_buildReportHtml(_allFindings, aiReport, _activeScanId));
+    win.document.close();
+    setTimeout(() => { try { win.focus(); win.print(); } catch(e){} }, 600);
+    Toast.success("Report opened — Print → Save as PDF");
+  } catch(e) {
+    Toast.error("Report failed: " + e.message);
+  } finally {
+    btn.disabled = false; btn.textContent = "📄 Export PDF Report";
+  }
+}
+
+function _buildReportHtml(findings, ai, scanId) {
+  const date   = new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
+  const sevOrd = {CRITICAL:0,HIGH:1,MEDIUM:2,LOW:3,INFO:4};
+  const sevCol = {CRITICAL:"#ef4444",HIGH:"#f97316",MEDIUM:"#eab308",LOW:"#22c55e",INFO:"#94a3b8"};
+  const sevBg  = {CRITICAL:"#fef2f2",HIGH:"#fff7ed",MEDIUM:"#fefce8",LOW:"#f0fdf4",INFO:"#f8fafc"};
+  const sorted = [...findings].sort((a,b)=>(sevOrd[a.severity]||9)-(sevOrd[b.severity]||9));
+  const counts = {CRITICAL:0,HIGH:0,MEDIUM:0,LOW:0};
+  sorted.forEach(f=>{ if(f.severity in counts) counts[f.severity]++; });
+  const risk   = ai?.risk_score ?? Math.min(100,(counts.CRITICAL*20)+(counts.HIGH*8)+(findings.length*2));
+  const riskCl = risk>=70?"#ef4444":risk>=40?"#eab308":"#22c55e";
+  const execSum= ai?.executive_summary
+    ?? `The assessment identified ${findings.length} security findings including ${counts.CRITICAL} critical and ${counts.HIGH} high severity issues. Immediate remediation is recommended.`;
+
+  // group findings by severity
+  const groups={};
+  ["CRITICAL","HIGH","MEDIUM","LOW","INFO"].forEach(s=>{ if(counts[s]||findings.filter(f=>f.severity===s).length) groups[s]=sorted.filter(f=>f.severity===s); });
+
+  // AI enrichment map: title → finding
+  const aiMap={};
+  (ai?.findings||[]).forEach(f=>{ if(f.title) aiMap[f.title.toLowerCase()]=f; });
+
+  const esc = s => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+
+  const findingHtml = (f,i) => {
+    const af = aiMap[(f.title||"").toLowerCase()]||{};
+    const desc  = af.explanation || f.description || "";
+    const remed = af.remediation_guidance || f.remediation || "";
+    const cli   = af.fix_cli || "";
+    const cis   = (f.cis_controls||[]).join(", ");
+    return `<div class="finding">
+      <div class="finding-title">
+        <span class="badge" style="background:${sevCol[f.severity]||"#94a3b8"}">${esc(f.severity)}</span>
+        <span>${i}. ${esc(f.title)}</span>
+      </div>
+      ${f.affected_resource?`<div class="resource">${esc(f.affected_resource)}</div>`:""}
+      ${f.module_id?`<div class="meta">Module: ${esc(f.module_id)}${f.region?" &nbsp;·&nbsp; Region: "+esc(f.region):""}</div>`:""}
+      ${desc?`<div class="label">Description</div><div class="body-text">${esc(desc)}</div>`:""}
+      ${remed?`<div class="label">Remediation Guidance</div><div class="remediation">${esc(remed)}</div>`:""}
+      ${cli?`<div class="label">Fix Command</div><div class="cli">${esc(cli)}</div>`:""}
+      ${cis?`<div class="label">CIS Controls</div><div class="meta">${esc(cis)}</div>`:""}
+    </div>`;
+  };
+
+  const planHtml = (sev,p) => {
+    const phases={CRITICAL:"Phase 1 — Immediate (24h)",HIGH:"Phase 2 — Short-Term (1 week)",MEDIUM:"Phase 3 — Medium-Term (1 month)",LOW:"Phase 4 — Long-Term"};
+    return `<div class="plan" style="border-left:4px solid ${sevCol[sev]}">
+      <div class="plan-title" style="color:${sevCol[sev]}">${phases[sev]||sev}</div>
+      <div class="plan-summary">${esc(p.summary||"")}</div>
+      <div class="plan-effort">Estimated effort: ${esc(p.estimated_effort||"—")}</div>
+      <ol>${(p.steps||[]).map(s=>`<li>${esc(s)}</li>`).join("")}</ol>
+    </div>`;
+  };
+
+  const cisHtml = cis => {
+    const keys=Object.keys(cis).sort((a,b)=>(sevOrd[(cis[b].highest_severity||"INFO").toUpperCase()]||9)-(sevOrd[(cis[a].highest_severity||"INFO").toUpperCase()]||9));
+    if(!keys.length) return "";
+    return `<section class="page-break">
+      <h2>05 / CIS CONTROL COMPLIANCE</h2>
+      <table><thead><tr><th>Control</th><th>Title</th><th>Status</th><th>Findings</th><th>Severity</th><th>Note</th></tr></thead>
+      <tbody>${keys.map(k=>{const c=cis[k];const s=(c.highest_severity||"INFO").toUpperCase();return`<tr>
+        <td class="mono">${esc(k)}</td><td><b>${esc(c.title||k)}</b></td>
+        <td style="color:#ef4444;font-weight:700">${esc(c.status||"FAIL")}</td>
+        <td style="text-align:center">${c.findings_count||0}</td>
+        <td><span class="badge" style="background:${sevCol[s]||"#94a3b8"}">${s}</span></td>
+        <td style="font-size:9pt;color:#64748b">${esc(c.remediation_note||"—")}</td>
+      </tr>`;}).join("")}</tbody></table></section>`;
+  };
+
+  const plans = ai?.remediation_plans||{};
+  const planKeys=["CRITICAL","HIGH","MEDIUM","LOW"].filter(s=>plans[s]);
+
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
+<title>Security Assessment Report — ${scanId.slice(0,8)}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:"Segoe UI",Arial,sans-serif;color:#1e293b;font-size:11pt;line-height:1.6}
+h2{font-size:16pt;color:#0f172a;margin:0 0 6px;letter-spacing:.5px}
+h3{font-size:12pt;color:#0f172a;margin:12px 0 6px}
+table{width:100%;border-collapse:collapse;font-size:9.5pt;margin-top:10px}
+th{background:#0f172a;color:#fff;padding:7px 10px;text-align:left;font-size:9pt}
+td{padding:6px 10px;border-bottom:1px solid #e2e8f0;vertical-align:top}
+tr:nth-child(even) td{background:#f8fafc}
+.badge{display:inline-block;color:#fff;font-size:8pt;font-weight:700;padding:2px 8px;border-radius:3px;letter-spacing:.5px}
+.mono{font-family:"Courier New",monospace;font-size:9pt}
+section{margin-bottom:28px}
+.rule{border:none;border-top:2px solid #22d3ee;margin:8px 0 16px}
+.label{font-size:8pt;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#64748b;margin:10px 0 3px}
+.body-text{color:#334155;font-size:10pt}
+.resource{font-family:"Courier New",monospace;font-size:9pt;color:#065f46;background:#f0fdf4;padding:5px 10px;border-radius:4px;margin:4px 0}
+.remediation{background:#f0fdf4;border-left:3px solid #22c55e;padding:8px 12px;font-size:10pt;color:#334155}
+.cli{font-family:"Courier New",monospace;font-size:9pt;background:#0f172a;color:#22d3ee;padding:7px 12px;border-radius:4px;margin:4px 0;overflow-wrap:anywhere}
+.meta{font-size:9pt;color:#64748b;margin:3px 0}
+.finding{padding:14px 0;border-bottom:1px solid #e2e8f0;page-break-inside:avoid}
+.finding-title{display:flex;align-items:center;gap:10px;font-weight:700;font-size:11pt;margin-bottom:6px}
+.plan{padding:14px 16px;margin-bottom:14px;background:#f8fafc;border-radius:4px;page-break-inside:avoid}
+.plan-title{font-weight:700;font-size:12pt;margin-bottom:6px}
+.plan-summary{color:#334155;margin-bottom:8px}
+.plan-effort{font-size:9pt;color:#64748b;margin-bottom:8px}
+.plan ol{padding-left:20px;color:#334155}
+.plan li{margin-bottom:4px}
+.sev-tile{display:inline-block;min-width:100px;padding:12px 16px;margin:6px;border-radius:6px;text-align:center}
+.sev-val{font-size:28pt;font-weight:700;line-height:1.1}
+.sev-lbl{font-size:8pt;font-weight:700;letter-spacing:1px}
+.page-break{page-break-before:always;padding-top:16px}
+/* ── Cover ─────────────────────── */
+.cover{min-height:100vh;background:#0f172a;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:40px;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+.cover-accent{width:60px;height:4px;background:#22d3ee;margin:16px auto}
+.cover-class{font-size:8pt;letter-spacing:3px;color:#22d3ee;font-weight:700;margin-bottom:32px}
+.cover-title{font-size:32pt;font-weight:700;color:#fff;line-height:1.15;margin-bottom:8px}
+.cover-sub{font-size:14pt;color:#94a3b8;margin-bottom:32px}
+.cover-meta{font-size:10pt;color:#94a3b8;margin:4px 0}
+.cover-meta b{color:#fff}
+.score-box{margin:28px auto;padding:20px 36px;border:2px solid;border-radius:8px;min-width:200px;background:#1e293b;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+.score-num{font-size:48pt;font-weight:700;line-height:1}
+.score-lbl{font-size:9pt;letter-spacing:2px;margin-top:4px}
+.cover-footer{position:absolute;bottom:24px;font-size:8pt;color:#475569;letter-spacing:1px}
+/* ── Print ─────────────────────── */
+@media print{
+  .cover{page-break-after:always}
+  .page-break{page-break-before:always}
+  body{font-size:10.5pt}
+  .cover{background:#0f172a!important;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+  .score-box{background:#1e293b!important;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+  .cli{background:#0f172a!important;color:#22d3ee!important;print-color-adjust:exact;-webkit-print-color-adjust:exact}
+  .remediation,.resource{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+  .sev-tile{print-color-adjust:exact;-webkit-print-color-adjust:exact}
+}
+</style></head><body>
+
+<!-- ══ COVER ══════════════════════════════════════════════════════════════ -->
+<div class="cover">
+  <div class="cover-class">CONFIDENTIAL &nbsp;·&nbsp; PENTEST REPORT &nbsp;·&nbsp; AUTHORIZED PERSONNEL ONLY</div>
+  <div class="cover-title">CLOUD SECURITY</div>
+  <div class="cover-title">ASSESSMENT REPORT</div>
+  <div class="cover-accent"></div>
+  <div class="cover-sub">AWS Security Assessment</div>
+  <div class="cover-meta"><b>Scan ID:</b> ${esc(scanId)}</div>
+  <div class="cover-meta"><b>Report Date:</b> ${date}</div>
+  <div class="score-box" style="border-color:${riskCl}">
+    <div class="score-lbl" style="color:#94a3b8">RISK SCORE</div>
+    <div class="score-num" style="color:${riskCl}">${risk}</div>
+    <div class="score-lbl" style="color:${riskCl}">${risk>=70?"HIGH RISK":risk>=40?"MEDIUM RISK":"LOW RISK"}</div>
+  </div>
+  <div style="color:#94a3b8;font-size:9pt">Generated by MCPP &nbsp;·&nbsp; Multi-Cloud Pentest Platform</div>
+</div>
+
+<!-- ══ EXECUTIVE SUMMARY ═══════════════════════════════════════════════════ -->
+<section style="padding-top:16px">
+  <h2>01 / EXECUTIVE SUMMARY</h2><hr class="rule">
+  <p style="color:#334155;font-size:11pt;margin-bottom:20px">${esc(execSum)}</p>
+  <div style="display:flex;flex-wrap:wrap;gap:0">
+    ${["CRITICAL","HIGH","MEDIUM","LOW"].map(s=>`
+    <div class="sev-tile" style="background:${sevBg[s]};border:1px solid ${sevCol[s]}40">
+      <div class="sev-val" style="color:${sevCol[s]}">${counts[s]||0}</div>
+      <div class="sev-lbl" style="color:${sevCol[s]}">${s}</div>
+    </div>`).join("")}
+  </div>
+</section>
+
+<!-- ══ RISK OVERVIEW ════════════════════════════════════════════════════════ -->
+<section class="page-break">
+  <h2>02 / RISK OVERVIEW</h2><hr class="rule">
+  <p style="color:#334155;margin-bottom:16px">This assessment identified <b>${findings.length} security findings</b> across the cloud environment. The table below provides the severity breakdown.</p>
+  <table>
+    <thead><tr><th>Severity</th><th>Count</th><th style="width:55%">Distribution</th></tr></thead>
+    <tbody>${["CRITICAL","HIGH","MEDIUM","LOW"].map(s=>{
+      const c=counts[s]||0;const pct=findings.length?Math.round(c/findings.length*100):0;
+      return`<tr><td><span class="badge" style="background:${sevCol[s]}">${s}</span></td>
+      <td style="font-weight:700;color:${sevCol[s]};font-size:14pt">${c}</td>
+      <td><div style="background:#e2e8f0;border-radius:3px;height:12px;overflow:hidden"><div style="background:${sevCol[s]};width:${pct}%;height:100%;print-color-adjust:exact;-webkit-print-color-adjust:exact"></div></div></td>
+      </tr>`;}).join("")}
+    </tbody>
+  </table>
+</section>
+
+<!-- ══ DETAILED FINDINGS ════════════════════════════════════════════════════ -->
+<section class="page-break">
+  <h2>03 / DETAILED FINDINGS</h2><hr class="rule">
+  <p style="color:#334155;margin-bottom:16px">All ${findings.length} findings listed below, grouped by severity.</p>
+  ${["CRITICAL","HIGH","MEDIUM","LOW","INFO"].filter(s=>(groups[s]||[]).length).map(s=>{
+    const grp=groups[s]||[];
+    return`<div style="margin-bottom:24px">
+      <div style="background:${sevCol[s]};color:#fff;font-weight:700;font-size:11pt;padding:8px 14px;border-radius:4px;margin-bottom:12px;print-color-adjust:exact;-webkit-print-color-adjust:exact">
+        ${s} &nbsp;(${grp.length} finding${grp.length!==1?"s":""})
+      </div>
+      ${grp.map((f,i)=>findingHtml(f,i+1)).join("")}
+    </div>`;
+  }).join("")}
+</section>
+
+<!-- ══ REMEDIATION ROADMAP ══════════════════════════════════════════════════ -->
+${planKeys.length?`<section class="page-break">
+  <h2>04 / REMEDIATION ROADMAP</h2><hr class="rule">
+  <p style="color:#334155;margin-bottom:16px">Address each phase in order to reduce risk exposure systematically.</p>
+  ${planKeys.map(s=>planHtml(s,plans[s])).join("")}
+</section>`:""}
+
+<!-- ══ CIS COMPLIANCE ═══════════════════════════════════════════════════════ -->
+${cisHtml(ai?.cis_mapping||{})}
+
+<!-- ══ CONCLUSION ═══════════════════════════════════════════════════════════ -->
+<section class="page-break">
+  <h2>${ai?.cis_mapping&&Object.keys(ai.cis_mapping).length?"06":"05"} / CONCLUSION</h2><hr class="rule">
+  <p style="color:#334155;margin-bottom:12px">
+    This automated cloud security assessment identified <b>${findings.length} security findings</b> across the target environment.
+    The overall risk score is <b style="color:${riskCl}">${risk} / 100</b>.
+    ${counts.CRITICAL>0?"Critical findings require immediate executive attention and emergency remediation.":
+      counts.HIGH>0?"High-severity findings should be addressed within the week.":
+      "The environment shows a moderate security posture with clear improvement opportunities."}
+  </p>
+  <h3>Recommended Next Steps</h3>
+  <ol style="padding-left:20px;color:#334155;margin-top:8px">
+    <li>Assign an owner and due date to each critical and high finding.</li>
+    <li>Establish a recurring scan schedule (weekly for production environments).</li>
+    <li>Integrate security scanning into the CI/CD pipeline.</li>
+    <li>Review and update IAM least-privilege policies across all services.</li>
+    <li>Enable cloud-native security services for continuous monitoring.</li>
+    <li>Document accepted risks with business justification.</li>
+  </ol>
+  <div style="margin-top:28px;padding:12px 16px;background:#f1f5f9;border-radius:4px;font-size:8.5pt;color:#64748b">
+    This report was generated automatically by the Multi-Cloud Pentest Platform (MCPP) with AI-assisted analysis. Results should be validated by a qualified security engineer before remediation.
+  </div>
+</section>
+
+</body></html>`;
+}
+
+init();
+</script>
+</body>
+</html>

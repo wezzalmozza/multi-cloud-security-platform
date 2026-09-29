@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>New Scan — MCPP</title>
+  <link rel="stylesheet" href="../assets/css/app.css">
+</head>
+<body>
+<div class="layout">
+  <div id="sidebar"></div>
+  <main class="main-content">
+    <div class="page-header">
+      <h1 class="page-title">New Assessment</h1>
+      <p class="page-subtitle">// configure and launch cloud security scan</p>
+    </div>
+
+    <div class="steps">
+      <div class="step step-active" id="s1">01 · Cloud &amp; Auth</div>
+      <div class="step" id="s2">02 · Scope</div>
+      <div class="step" id="s3">03 · Modules</div>
+    </div>
+
+    <!-- Step 1 -->
+    <div id="step1">
+      <div class="card">
+        <div class="card-title">Cloud Provider &amp; Credentials</div>
+        <div class="form-group">
+          <label class="form-label">Scan Name</label>
+          <input id="scan-name" class="form-input" placeholder="e.g. AWS Prod Audit Q2-2025">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Cloud Provider</label>
+          <select id="provider" class="form-select" onchange="switchProvider()">
+            <option value="aws">Amazon Web Services (AWS)</option>
+            <option value="azure">Microsoft Azure</option>
+            <option value="gcp">Google Cloud Platform (GCP)</option>
+          </select>
+          <p class="form-hint">💡 <strong>Pro tip:</strong> Leave fields empty to use locally configured credentials (AWS CLI env vars, ~/.aws/config).</p>
+        </div>
+
+        <!-- AWS -->
+        <div id="creds-aws">
+          <div class="form-group">
+            <label class="form-label">Auth Method</label>
+            <select id="aws-auth" class="form-select" onchange="switchAWSAuth()">
+              <option value="keys">Access Key + Secret</option>
+              <option value="role">Role ARN (cross-account)</option>
+              <option value="profile">Named Profile</option>
+            </select>
+          </div>
+          <div id="aws-keys">
+            <div class="form-group">
+              <label class="form-label">Access Key ID</label>
+              <input id="aws-key-id" class="form-input" placeholder="AKIAIOSFODNN7EXAMPLE">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Secret Access Key</label>
+              <input id="aws-secret" class="form-input" type="password" placeholder="wJalrXUtnFEMI...">
+            </div>
+          </div>
+          <div id="aws-role" style="display:none">
+            <div class="form-group">
+              <label class="form-label">Role ARN</label>
+              <input id="aws-role-arn" class="form-input" placeholder="arn:aws:iam::123456789012:role/PentestRole">
+            </div>
+            <div class="form-group">
+              <label class="form-label">External ID <span style="color:var(--text3)">(optional)</span></label>
+              <input id="aws-ext-id" class="form-input" placeholder="my-external-id">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Source Profile <span style="color:var(--text3)">(optional)</span></label>
+              <input id="aws-role-source-profile" class="form-input" placeholder="default">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Source Access Key ID <span style="color:var(--text3)">(optional)</span></label>
+              <input id="aws-role-source-key-id" class="form-input" placeholder="AKIAIOSFODNN7EXAMPLE">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Source Secret Access Key <span style="color:var(--text3)">(optional)</span></label>
+              <input id="aws-role-source-secret" class="form-input" type="password" placeholder="wJalrXUtnFEMI...">
+            </div>
+          </div>
+          <div id="aws-profile" style="display:none">
+            <div class="form-group">
+              <label class="form-label">Profile Name</label>
+              <input id="aws-profile-name" class="form-input" placeholder="default">
+            </div>
+          </div>
+        </div>
+
+        <!-- Azure -->
+        <div id="creds-azure" style="display:none">
+          <div class="form-group"><label class="form-label">Tenant ID</label><input id="az-tenant" class="form-input" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div>
+          <div class="form-group"><label class="form-label">Client ID</label><input id="az-client" class="form-input" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div>
+          <div class="form-group"><label class="form-label">Client Secret</label><input id="az-secret" class="form-input" type="password" placeholder="your-client-secret"></div>
+          <div class="form-group"><label class="form-label">Subscription ID</label><input id="az-sub" class="form-input" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"></div>
+        </div>
+
+        <!-- GCP -->
+        <div id="creds-gcp" style="display:none">
+          <div class="form-group"><label class="form-label">Project ID</label><input id="gcp-project" class="form-input" placeholder="my-gcp-project"></div>
+          <div class="form-group">
+            <label class="form-label">Service Account JSON</label>
+            <textarea id="gcp-sa-json" class="form-textarea" rows="4" placeholder='{"type":"service_account",...}'></textarea>
+          </div>
+        </div>
+
+        <div style="display:flex;justify-content:flex-end;margin-top:8px">
+          <button class="btn btn-primary" onclick="validateAndGoStep(2)">Next: Scope →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 2 -->
+    <div id="step2" style="display:none">
+      <div class="card">
+        <div class="card-title">Scan Scope</div>
+        <div class="form-group">
+          <label class="form-label">Regions <span style="color:var(--text3)">(optional, comma-separated)</span></label>
+          <input id="regions" class="form-input" placeholder="us-east-1, eu-west-1">
+          <p class="form-hint">Leave empty to scan all discoverable regions.</p>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:8px">
+          <button class="btn btn-ghost" onclick="goStep(1)">← Back</button>
+          <button class="btn btn-primary" onclick="goStep(3)">Next: Modules →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3 -->
+    <div id="step3" style="display:none">
+      <div class="card">
+        <div class="card-title">Security Modules</div>
+        <div style="display:flex;gap:8px;margin-bottom:18px">
+          <button class="btn btn-ghost btn-sm" onclick="selectAll(true)">Select All</button>
+          <button class="btn btn-ghost btn-sm" onclick="selectAll(false)">Clear All</button>
+        </div>
+        <div id="module-list" style="color:var(--text2);font-family:var(--font-mono);font-size:12px">
+          <div style="display:flex;align-items:center;gap:8px;padding:12px 0"><div class="pulse-dot"></div> Loading modules…</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:20px">
+          <button class="btn btn-ghost" onclick="goStep(2)">← Back</button>
+          <button class="btn btn-primary btn-lg" onclick="launchScan()">⚡ Launch Scan</button>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script src="../assets/js/utils/auth.js"></script>
+<script src="../assets/js/utils/helpers.js"></script>
+<script src="../assets/js/api/client.js"></script>
+<script src="../assets/js/components/toast.js"></script>
+<script src="../assets/js/components/sidebar.js"></script>
+<script src="../assets/js/components/modal.js"></script>
+<script>
+Auth.guard();
+let _modules = [];
+let _existingScanNames = [];
+
+async function loadExistingScanNames() {
+  try { const data = await API.listScans(); _existingScanNames = (data.scans||[]).map(s=>s.name.toLowerCase()); } catch(e) {}
+}
+async function init() {
+  try { const data = await API.getModules(); _modules = data.modules; renderModules(_modules); } catch(e) { Toast.error("Could not load modules: " + e.message); }
+}
+loadExistingScanNames();
+
+function renderModules(modules) {
+  const cats = [...new Set(modules.map(m => m.category))];
+  const el = document.getElementById("module-list");
+  el.innerHTML = cats.map(cat => `
+    <div style="margin-bottom:20px">
+      <div style="font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:2px;color:var(--text3);margin-bottom:10px;font-family:var(--font-mono);">${cat}</div>
+      ${modules.filter(m => m.category === cat).map(m => `
+        <label class="module-item checked" id="wrap-${m.module_id}">
+          <div class="module-checkbox">✓</div>
+          <input type="checkbox" id="mod-${m.module_id}" value="${m.module_id}" checked onchange="toggleModule('${m.module_id}', this.checked)" style="display:none">
+          <div>
+            <div class="module-name">${m.name} ${Helpers.severityBadge(m.severity)}</div>
+            <div class="module-desc">Supports: ${m.providers.map(p=>Helpers.providerLabel(p)).join(', ')}</div>
+          </div>
+        </label>`).join("")}
+    </div>`).join("");
+}
+
+function toggleModule(id, checked) {
+  const wrap = document.getElementById("wrap-"+id);
+  wrap.classList.toggle("checked", checked);
+  wrap.querySelector(".module-checkbox").textContent = checked ? "✓" : "";
+}
+
+function selectAll(val) {
+  document.querySelectorAll("#module-list input[type=checkbox]").forEach(cb => {
+    cb.checked = val; toggleModule(cb.value, val);
+  });
+}
+
+function goStep(n) {
+  [1,2,3].forEach(i => {
+    document.getElementById("step"+i).style.display = i === n ? "block" : "none";
+    const el = document.getElementById("s"+i);
+    el.className = "step" + (i === n ? " step-active" : i < n ? " step-done" : "");
+  });
+  if (n === 3 && _modules.length === 0) init();
+}
+
+async function validateAndGoStep(n) {
+  if (n === 2) {
+    const name = document.getElementById("scan-name").value.trim();
+    if (!name) return Toast.error("Please enter a scan name.");
+    if (_existingScanNames.includes(name.toLowerCase())) return Toast.error(`Scan name "${name}" already used.`);
+  }
+  goStep(n);
+}
+
+function switchProvider() {
+  const p = document.getElementById("provider").value;
+  ["aws","azure","gcp"].forEach(id => document.getElementById("creds-"+id).style.display = id === p ? "block" : "none");
+}
+
+function switchAWSAuth() {
+  const v = document.getElementById("aws-auth").value;
+  ["keys","role","profile"].forEach(id => document.getElementById("aws-"+id).style.display = id === v ? "block" : "none");
+}
+
+function buildCredentials() {
+  const p = document.getElementById("provider").value;
+  if (p === "aws") {
+    const method = document.getElementById("aws-auth").value;
+    if (method === "keys") return { access_key_id: document.getElementById("aws-key-id").value.trim(), secret_access_key: document.getElementById("aws-secret").value.trim() };
+    if (method === "role") return { role_arn: document.getElementById("aws-role-arn").value.trim(), external_id: document.getElementById("aws-ext-id").value.trim(), profile: document.getElementById("aws-role-source-profile").value.trim(), access_key_id: document.getElementById("aws-role-source-key-id").value.trim(), secret_access_key: document.getElementById("aws-role-source-secret").value.trim() };
+    if (method === "profile") return { profile: document.getElementById("aws-profile-name").value.trim() };
+  }
+  if (p === "azure") return { tenant_id: document.getElementById("az-tenant").value.trim(), client_id: document.getElementById("az-client").value.trim(), client_secret: document.getElementById("az-secret").value.trim(), subscription_id: document.getElementById("az-sub").value.trim() };
+  if (p === "gcp") { const raw = document.getElementById("gcp-sa-json").value.trim(); return { project_id: document.getElementById("gcp-project").value.trim(), service_account_info: raw ? JSON.parse(raw) : undefined }; }
+  return {};
+}
+
+function validateCredentials() {
+  const p = document.getElementById("provider").value;
+  const creds = buildCredentials();
+  const hasAnyCred = Object.values(creds).some(v => v && (typeof v === "object" || v.length > 0));
+  if (!hasAnyCred) return null;
+  if (p === "aws") {
+    const method = document.getElementById("aws-auth").value;
+    if (method === "keys" && (!creds.access_key_id || !creds.secret_access_key)) return "Enter both Access Key ID and Secret Access Key";
+    if (method === "role" && !creds.role_arn) return "Enter AWS Role ARN";
+    if (method === "profile" && !creds.profile) return "Enter AWS Profile Name";
+  }
+  if (p === "azure" && (!creds.tenant_id || !creds.client_id || !creds.client_secret || !creds.subscription_id)) return "Fill in all Azure credential fields";
+  if (p === "gcp" && (!creds.project_id || !creds.service_account_info)) return "Provide GCP Project ID and Service Account JSON";
+  return null;
+}
+
+async function launchScan() {
+  const name = document.getElementById("scan-name").value.trim();
+  const provider = document.getElementById("provider").value;
+  const regions = document.getElementById("regions").value.split(",").map(r=>r.trim()).filter(Boolean);
+  const mids = [...document.querySelectorAll("#module-list input:checked")].map(cb => cb.value);
+  if (!name) return Toast.error("Please enter a scan name.");
+  if (!mids.length) return Toast.error("Select at least one module.");
+  const credError = validateCredentials();
+  if (credError) return Toast.error(credError);
+  try {
+    const creds = buildCredentials();
+    await API.preflightAuth({ provider, credentials: creds });
+    const data = await API.startScan({ name, provider, credentials: creds, regions, module_ids: mids });
+    sessionStorage.setItem("active_scan_id", data.scan_id);
+    window.location.href = "execution.html";
+  } catch(e) { Toast.error(e.message || "Launch failed"); }
+}
+</script>
+</body>
+</html>

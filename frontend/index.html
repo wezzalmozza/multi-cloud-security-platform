@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCPP — Sign In</title>
+  <link rel="stylesheet" href="assets/css/app.css">
+</head>
+<body>
+<div class="login-page">
+  <div class="login-bg-effects">
+    <div class="login-bg-circle login-bg-circle-1"></div>
+    <div class="login-bg-circle login-bg-circle-2"></div>
+  </div>
+
+  <div class="login-card">
+    <div class="login-logo-wrap">
+      <div class="login-logo-icon">⚡</div>
+      <div class="login-title">Multi-Cloud Pentest Platform</div>
+      <div class="login-sub">// security assessment suite v2.0</div>
+    </div>
+
+    <div id="login-form">
+      <div class="form-group">
+        <label class="form-label">Username</label>
+        <input id="username" class="form-input" type="text" placeholder="operator" autofocus>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Password</label>
+        <input id="password" class="form-input" type="password" placeholder="••••••••••••">
+      </div>
+      <div id="error-msg" style="color:var(--danger);font-size:12px;margin-bottom:14px;display:none;font-family:var(--font-mono);padding:10px;background:var(--critical-bg);border:1px solid rgba(255,62,94,.2);border-radius:var(--radius);"></div>
+      <button id="login-btn" class="btn btn-primary" style="width:100%;justify-content:center;" onclick="doLogin()">
+        Initialize Session →
+      </button>
+      <p style="text-align:center;font-size:12px;margin-top:16px;color:var(--text3);font-family:var(--font-mono);">
+        No account? <a href="#" onclick="toggleForm(event)" style="color:var(--green);">Register operator</a>
+      </p>
+    </div>
+
+    <div id="register-form" style="display:none">
+      <div class="form-group">
+        <label class="form-label">Username</label>
+        <input id="reg-username" class="form-input" type="text" placeholder="new_operator">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Password</label>
+        <input id="reg-password" class="form-input" type="password" placeholder="min. 6 characters">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Confirm Password</label>
+        <input id="reg-password-confirm" class="form-input" type="password" placeholder="repeat password">
+      </div>
+      <div id="error-msg-reg" style="font-size:12px;margin-bottom:14px;display:none;font-family:var(--font-mono);padding:10px;border-radius:var(--radius);"></div>
+      <button id="register-btn" class="btn btn-primary" style="width:100%;justify-content:center;" onclick="doRegister()">
+        Create Operator Account →
+      </button>
+      <p style="text-align:center;font-size:12px;margin-top:16px;color:var(--text3);font-family:var(--font-mono);">
+        Have an account? <a href="#" onclick="toggleForm(event)" style="color:var(--green);">Sign in here</a>
+      </p>
+    </div>
+  </div>
+</div>
+
+<script src="assets/js/utils/auth.js"></script>
+<script src="assets/js/utils/helpers.js"></script>
+<script src="assets/js/api/client.js"></script>
+<script src="assets/js/components/toast.js"></script>
+<script>
+  if (Auth.isLoggedIn()) window.location.href = "pages/dashboard.html";
+
+  document.addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+      if (document.getElementById("login-form").style.display !== "none") doLogin();
+      else doRegister();
+    }
+  });
+
+  function toggleForm(e) {
+    e.preventDefault();
+    const loginForm = document.getElementById("login-form");
+    const regForm   = document.getElementById("register-form");
+    loginForm.style.display = loginForm.style.display === "none" ? "block" : "none";
+    regForm.style.display   = regForm.style.display   === "none" ? "block" : "none";
+  }
+
+  async function doLogin() {
+    const btn      = document.getElementById("login-btn");
+    const errEl    = document.getElementById("error-msg");
+    const username = document.getElementById("username").value.trim();
+    const password = document.getElementById("password").value;
+
+    if (!username || !password) {
+      errEl.textContent = "[ ERR ] Username and password required.";
+      errEl.style.display = "block"; return;
+    }
+    btn.disabled = true; btn.textContent = "Authenticating…";
+    errEl.style.display = "none";
+
+    try {
+      const data = await API.login(username, password);
+      Auth.save(data.access_token, { username: data.username, role: data.role });
+      window.location.href = "pages/dashboard.html";
+    } catch (err) {
+      errEl.textContent = "[ ERR ] " + (err.message || "Invalid credentials.");
+      errEl.style.display = "block";
+      btn.disabled = false; btn.textContent = "Initialize Session →";
+    }
+  }
+
+  async function doRegister() {
+    const btn      = document.getElementById("register-btn");
+    const errEl    = document.getElementById("error-msg-reg");
+    const username = document.getElementById("reg-username").value.trim();
+    const password = document.getElementById("reg-password").value;
+    const confirm  = document.getElementById("reg-password-confirm").value;
+
+    if (!username || !password || !confirm) {
+      errEl.textContent = "[ ERR ] All fields required.";
+      errEl.style.cssText = "display:block;color:var(--danger);background:var(--critical-bg);border:1px solid rgba(255,62,94,.2);padding:10px;border-radius:var(--radius)";
+      return;
+    }
+    if (password !== confirm) {
+      errEl.textContent = "[ ERR ] Passwords do not match.";
+      errEl.style.cssText = "display:block;color:var(--danger);background:var(--critical-bg);border:1px solid rgba(255,62,94,.2);padding:10px;border-radius:var(--radius)";
+      return;
+    }
+    if (password.length < 6) {
+      errEl.textContent = "[ ERR ] Password must be ≥ 6 characters.";
+      errEl.style.cssText = "display:block;color:var(--danger);background:var(--critical-bg);border:1px solid rgba(255,62,94,.2);padding:10px;border-radius:var(--radius)";
+      return;
+    }
+
+    btn.disabled = true; btn.textContent = "Creating account…";
+    errEl.style.display = "none";
+
+    try {
+      await API.createUser(username, password);
+      errEl.textContent = "[ OK ] Account created — redirecting to login…";
+      errEl.style.cssText = "display:block;color:var(--green);background:var(--low-bg);border:1px solid var(--green-border);padding:10px;border-radius:var(--radius)";
+      setTimeout(() => {
+        document.getElementById("login-form").style.display = "block";
+        document.getElementById("register-form").style.display = "none";
+        document.getElementById("username").value = username;
+        errEl.style.display = "none";
+        btn.disabled = false; btn.textContent = "Create Operator Account →";
+      }, 1500);
+    } catch (err) {
+      errEl.textContent = "[ ERR ] " + (err.message || "Registration failed.");
+      errEl.style.cssText = "display:block;color:var(--danger);background:var(--critical-bg);border:1px solid rgba(255,62,94,.2);padding:10px;border-radius:var(--radius)";
+      btn.disabled = false; btn.textContent = "Create Operator Account →";
+    }
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Scan Execution — MCPP</title>
+  <link rel="stylesheet" href="../assets/css/app.css">
+</head>
+<body>
+<div class="layout">
+  <div id="sidebar"></div>
+  <main class="main-content">
+    <div class="page-header page-header-row">
+      <div>
+        <h1 class="page-title">Scan Execution</h1>
+        <p class="page-subtitle" id="scan-id-label" style="font-family:var(--font-mono)">// connecting to scan stream…</p>
+      </div>
+      <div id="status-badge"></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 320px;gap:20px">
+      <!-- Left: progress -->
+      <div>
+        <div class="card mb-20">
+          <div class="flex-between mb-16">
+            <div class="card-title" style="margin-bottom:0">Scan Progress</div>
+            <div style="display:flex;align-items:center;gap:8px">
+              <div class="pulse-dot" id="pulse"></div>
+              <span id="prog-pct" style="font-family:var(--font-mono);font-size:12px;color:var(--green)">0%</span>
+            </div>
+          </div>
+          <div class="progress-wrap">
+            <div class="progress-bar progress-bar-pulse" id="prog-bar" style="width:0%"></div>
+          </div>
+          <div style="margin-top:8px;font-size:11px;font-family:var(--font-mono);color:var(--text3)" id="current-module">Initializing modules…</div>
+        </div>
+
+        <div class="card mb-20">
+          <div class="card-title">Live Statistics</div>
+          <div class="card-grid" style="grid-template-columns:repeat(4,1fr)">
+            <div class="stat-tile stat-critical">
+              <div class="stat-icon">🔴</div>
+              <div class="stat-value" id="cnt-c">0</div>
+              <div class="stat-label">Critical</div>
+              <div class="stat-bar"></div>
+            </div>
+            <div class="stat-tile stat-high">
+              <div class="stat-icon">🟠</div>
+              <div class="stat-value" id="cnt-h">0</div>
+              <div class="stat-label">High</div>
+              <div class="stat-bar"></div>
+            </div>
+            <div class="stat-tile stat-medium">
+              <div class="stat-icon">🟡</div>
+              <div class="stat-value" id="cnt-m">0</div>
+              <div class="stat-label">Medium</div>
+              <div class="stat-bar"></div>
+            </div>
+            <div class="stat-tile stat-low">
+              <div class="stat-icon">🟢</div>
+              <div class="stat-value" id="cnt-l">0</div>
+              <div class="stat-label">Low</div>
+              <div class="stat-bar"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="complete-actions" style="display:none">
+          <div class="card" style="border-color:var(--green-border);background:var(--green-glow2)">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+              <div style="width:36px;height:36px;background:var(--green);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">✓</div>
+              <div>
+                <div style="font-weight:700;color:var(--green)">Scan Complete</div>
+                <div style="font-size:12px;color:var(--text3);font-family:var(--font-mono);">All modules finished</div>
+              </div>
+            </div>
+            <div style="display:flex;gap:10px">
+              <button class="btn btn-primary" onclick="window.location.href='findings.html'">View Findings →</button>
+              <button class="btn btn-ghost" onclick="window.location.href='dashboard.html'">Dashboard</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right: live findings feed -->
+      <div class="card" style="height:fit-content;position:sticky;top:20px">
+        <div class="card-title">Live Feed</div>
+        <div class="finding-feed" id="feed">
+          <div style="text-align:center;padding:24px;color:var(--text3);font-size:12px;font-family:var(--font-mono);">
+            Waiting for findings…
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="../assets/js/utils/auth.js"></script>
+<script src="../assets/js/utils/helpers.js"></script>
+<script src="../assets/js/api/client.js"></script>
+<script src="../assets/js/components/toast.js"></script>
+<script src="../assets/js/components/sidebar.js"></script>
+<script>
+Auth.guard();
+
+const scanId = sessionStorage.getItem("active_scan_id");
+if (!scanId) { Toast.error("No active scan."); setTimeout(() => window.location.href="dashboard.html", 1500); }
+
+document.getElementById("scan-id-label").textContent = `// scan_id: ${scanId}`;
+
+let _feedCount  = 0;      // findings already rendered in the feed
+let _scanDone   = false;  // true once completed/error
+let _pollTimer  = null;
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+
+function setProgress(pct, module, status) {
+  document.getElementById("prog-bar").style.width  = pct + "%";
+  document.getElementById("prog-pct").textContent  = pct + "%";
+  document.getElementById("current-module").textContent =
+    module   ? `> running: ${module}`
+    : status === "completed" ? "> all modules completed"
+    : "> initializing…";
+  document.getElementById("status-badge").innerHTML = Helpers.statusBadge(status);
+  const pulse = document.getElementById("pulse");
+  if (status === "completed") pulse.classList.add("stopped");
+  if (status === "error")     pulse.classList.add("error");
+}
+
+function setStats(sc) {
+  const c = sc || {};
+  document.getElementById("cnt-c").textContent = c.CRITICAL || 0;
+  document.getElementById("cnt-h").textContent = c.HIGH     || 0;
+  document.getElementById("cnt-m").textContent = c.MEDIUM   || 0;
+  document.getElementById("cnt-l").textContent = c.LOW      || 0;
+}
+
+function pushToFeed(findings) {
+  if (!findings || !findings.length) return;
+  const feed = document.getElementById("feed");
+  if (_feedCount === 0) feed.innerHTML = "";   // clear placeholder
+  findings.forEach(f => {
+    const sev  = (f.severity || "INFO").toUpperCase();
+    const item = document.createElement("div");
+    item.className = `feed-item ${sev}`;       // uppercase → matches CSS
+    item.innerHTML = `
+      <div class="feed-title">${Helpers.truncate(f.title || "Finding", 55)}</div>
+      <div class="feed-meta">${Helpers.severityBadge(sev)} ${Helpers.truncate(f.affected_resource || "", 40)}</div>`;
+    feed.prepend(item);
+  });
+  _feedCount += findings.length;
+}
+
+function markComplete(scanData) {
+  if (_scanDone) return;
+  _scanDone = true;
+  stopPolling();
+  document.getElementById("complete-actions").style.display = "block";
+  document.getElementById("prog-bar").classList.remove("progress-bar-pulse");
+  // store for dashboard / compliance pages
+  sessionStorage.setItem("scan_results", JSON.stringify({...scanData, scan_id: scanId}));
+  // always pull the full findings list from the /findings endpoint so nothing is missed
+  loadAllFindings();
+}
+
+async function loadAllFindings() {
+  try {
+    const fd  = await API.getFindings(scanId);
+    const all = fd.findings || [];
+    setStats(fd.severity_counts || {});
+    pushToFeed(all.slice(_feedCount));   // only new ones
+  } catch(e) {}
+}
+
+// ── WebSocket path ────────────────────────────────────────────────────────────
+
+function onWsMessage(data) {
+  const pct = Math.round(data.progress || 0);
+  setProgress(pct, data.current_module, data.status);
+  if (data.severity_counts) setStats(data.severity_counts);
+  // WS sends only *new* findings since last tick
+  if (Array.isArray(data.findings) && data.findings.length) pushToFeed(data.findings);
+  if (data.status === "completed") markComplete(data);
+  if (data.status === "error")     { _scanDone = true; stopPolling(); Toast.error("Scan error."); }
+}
+
+// ── HTTP polling fallback (when WS is unavailable / closed early) ─────────────
+
+async function pollOnce() {
+  try {
+    const data = await API.getScan(scanId);
+    const pct  = Math.round(data.progress || 0);
+    setProgress(pct, data.current_module, data.status);
+    // GET /scans/{id} returns full state when in-memory (includes findings + counts)
+    if (data.severity_counts) setStats(data.severity_counts);
+    if (Array.isArray(data.findings) && data.findings.length) {
+      pushToFeed(data.findings.slice(_feedCount));
+    }
+    if (data.status === "completed") { markComplete(data); return; }
+    if (data.status === "error")     { _scanDone = true; stopPolling(); Toast.error("Scan error."); }
+  } catch(e) {}
+}
+
+function startPolling() {
+  if (_pollTimer || _scanDone) return;
+  _pollTimer = setInterval(pollOnce, 2000);
+}
+
+function stopPolling() {
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+
+API.streamScan(scanId, onWsMessage, () => {
+  // WS closed (scan not found in memory, or connection dropped)
+  if (!_scanDone) {
+    pollOnce();          // immediate first check
+    startPolling();      // then every 2 s
+  }
+});
+</script>
+</body>
+</html>
